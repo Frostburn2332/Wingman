@@ -11,9 +11,21 @@ from checker import (
     FIELD_LABELS,
     FITS,
     WARNING,
+    candidates_for,
     describe_rule,
     format_value,
     shortlist,
+)
+from feedback import (
+    ALREADY_KNOWN,
+    NEW_RULE,
+    NO_CLEAR_RULE,
+    SUGGESTED_CHANGE,
+    apply_rule,
+    build_prompt,
+    decide_outcome,
+    read_feedback,
+    reading_to_rule,
 )
 
 DATA = Path(__file__).parent / "data"
@@ -23,6 +35,8 @@ STATUS_LABELS = {
     WARNING: ":orange[**Warning**]",
     BLOCKED: ":red[**Blocked**]",
 }
+
+WRITE_OWN = "Write your own reply"
 
 # Shown on the second line of a profile card. Age, height and city are on the first.
 DETAIL_FIELDS = ["religion", "diet", "smokes", "drinks", "wants_children", "marital_status", "education"]
@@ -141,6 +155,7 @@ def shortlist_screen(client, profiles):
         disabled=not picked,
         on_click=send_selected,
         args=(client, checked),
+        key=f"send_{client['id']}",
     )
     st.caption("This prototype sends no email. Sending writes a line to the log below.")
 
@@ -149,27 +164,216 @@ def shortlist_screen(client, profiles):
         st.dataframe(st.session_state.send_log, hide_index=True, width="stretch")
 
 
+def rule_text(rule):
+    return f"{FIELD_LABELS[rule['field']]}: {describe_rule(rule)} ({rule['strength']})"
+
+
+def example_key(client):
+    return f"example_{client['id']}"
+
+
+def rejected_key(client):
+    return f"rejected_{client['id']}"
+
+
+def reply_key(client):
+    return f"reply_{client['id']}"
+
+
+def result_key(client):
+    return f"result_{client['id']}"
+
+
+def fill_example(client, examples_by_label, profiles):
+    """Picking an example fills in its reply and the profile it was about."""
+    example = examples_by_label.get(st.session_state[example_key(client)])
+    if example:
+        profile = next(p for p in profiles if p["id"] == example["profile_id"])
+        st.session_state[reply_key(client)] = example["reply"]
+        st.session_state[rejected_key(client)] = profile["name"]
+    st.session_state.pop(result_key(client), None)
+
+
+def read_reply(client, examples):
+    reply = st.session_state.get(reply_key(client), "").strip()
+    if not reply:
+        st.session_state[result_key(client)] = {"error": "Pick an example or paste a reply first."}
+        return
+    reading, source = read_feedback(reply, examples)
+    st.session_state[result_key(client)] = {
+        "reply": reply,
+        "profile_name": st.session_state[rejected_key(client)],
+        "reading": reading,
+        "source": source,
+        "added": None,
+    }
+
+
+def add_rule(client, profiles, rule):
+    """Store an approved rule and note which profiles changed status."""
+    before = {item["profile"]["name"]: item["status"] for item in shortlist(client, profiles)}
+    new_rules = apply_rule(client["rules"], rule)
+    st.session_state.rules[client["id"]] = new_rules
+    after = shortlist({**client, "rules": new_rules}, profiles)
+    st.session_state[result_key(client)]["added"] = {
+        "rule": rule,
+        "changes": [
+            (item["profile"]["name"], before[item["profile"]["name"]], item["status"])
+            for item in after
+            if item["status"] != before[item["profile"]["name"]]
+        ],
+    }
+
+
+def show_reading(reading, source, existing):
+    rule = reading_to_rule(reading, existing)
+    field = reading["field"]
+    st.markdown("\n".join([
+        f"- **Reason category:** {reading['category']}",
+        f"- **Profile field:** {FIELD_LABELS.get(field, 'none')}",
+        f"- **Would accept:** {describe_rule(rule) if rule else 'not given'}",
+        f"- **Strength:** {reading['strength']}",
+        f"- **Supporting phrase:** \"{reading['evidence']}\"",
+    ]))
+    if source == "saved":
+        st.caption("Source: saved example output. The live AI call is not connected yet.")
+
+
+def show_decision(client, profiles, decision):
+    outcome, rule, existing = decision["outcome"], decision["rule"], decision["existing_rule"]
+    if outcome == NO_CLEAR_RULE:
+        st.info("**No clear rule.** Nothing is suggested, because a vague feeling is not a rule.")
+        return
+    if outcome == ALREADY_KNOWN:
+        st.warning(
+            "**Already in preferences: this rejection was avoidable.** "
+            f"On record: {rule_text(existing)}. Source: {existing['source']}."
+        )
+        return
+    if outcome == SUGGESTED_CHANGE:
+        st.info(f"**Suggested change.** On record: {rule_text(existing)}. Suggested: {rule_text(rule)}.")
+    elif outcome == NEW_RULE:
+        st.info(f"**New: suggested rule.** {rule_text(rule)}.")
+    if decision["caution"]:
+        st.warning(
+            "The rejected profile would still pass this rule, so it may not be "
+            "the real reason. Read the reply again before adding it."
+        )
+    st.button(
+        "Add rule",
+        type="primary",
+        on_click=add_rule,
+        args=(client, profiles, rule),
+        key=f"add_rule_{client['id']}",
+    )
+    st.caption("Nothing changes until you add the rule. The AI never edits a client's preferences on its own.")
+
+
+def feedback_screen(client, profiles, examples):
+    st.subheader("Rejection feedback")
+    st.caption(
+        "Paste the client's reply. It is turned into fixed fields, compared to "
+        "the client's rules, and a rule is suggested only if it says something new."
+    )
+
+    candidates = candidates_for(client, profiles)
+    names = {p["id"]: p["name"] for p in candidates}
+    examples_by_label = {
+        f"{names[e['profile_id']]}: \"{e['reply']}\"": e
+        for e in examples
+        if e["client_id"] == client["id"]
+    }
+
+    st.selectbox(
+        "Example replies",
+        [WRITE_OWN, *examples_by_label],
+        key=example_key(client),
+        on_change=fill_example,
+        args=(client, examples_by_label, candidates),
+    )
+    st.selectbox("Profile that was rejected", [p["name"] for p in candidates], key=rejected_key(client))
+    st.text_area("Client's reply", key=reply_key(client))
+    st.button("Read feedback", on_click=read_reply, args=(client, examples), key=f"read_{client['id']}")
+
+    result = st.session_state.get(result_key(client))
+    if not result:
+        return
+    if "error" in result:
+        st.error(result["error"])
+        return
+    if result["reading"] is None:
+        st.info(
+            "Live reading is not available yet, so only the example replies can "
+            "be read. Pick one from the list above."
+        )
+        return
+
+    profile = next(p for p in candidates if p["name"] == result["profile_name"])
+    reading = result["reading"]
+    existing = next((r for r in client["rules"] if r["field"] == reading["field"]), None)
+
+    st.markdown(f"**What {client['name']} said about {profile['name']}**")
+    show_reading(reading, result["source"], existing)
+
+    if result["added"]:
+        added = result["added"]
+        st.success(f"**Rule added.** {rule_text(added['rule'])}, learned from feedback.")
+        if added["changes"]:
+            st.markdown("Profiles whose status changed on the shortlist:")
+            st.markdown("\n".join(
+                f"- {name}: {STATUS_LABELS[before]} to {STATUS_LABELS[after]}"
+                for name, before, after in added["changes"]
+            ))
+        else:
+            st.markdown("No profile changed status.")
+        st.caption("Open the Shortlist tab to see the updated list.")
+    else:
+        show_decision(client, profiles, decide_outcome(reading, client["rules"], profile))
+
+    with st.expander("Prompt and output fields"):
+        st.code(build_prompt(result["reply"]), language=None, wrap_lines=True)
+
+
+def reset_rules(clients):
+    st.session_state.rules = {c["id"]: c["rules"] for c in clients}
+    for c in clients:
+        st.session_state.pop(result_key(c), None)
+
+
 def main():
     st.set_page_config(page_title="Wingman", layout="wide")
     st.session_state.setdefault("send_log", [])
 
     clients = load("clients.json")
     profiles = load("profiles.json")
+    examples = load("feedback_examples.json")
+
+    # Rules live in the session so that approved rules take effect. They reset on refresh.
+    if "rules" not in st.session_state:
+        st.session_state.rules = {c["id"]: c["rules"] for c in clients}
 
     st.title("Wingman")
     st.caption(
-        "A shortlist that keeps out profiles a client has already said no to. "
-        "All data is made up."
+        "A shortlist that keeps out profiles a client has already said no to, "
+        "and learns new rules from rejection feedback. All data is made up."
     )
 
     with st.sidebar:
-        name = st.selectbox("Client", [c["name"] for c in clients])
-        client = next(c for c in clients if c["name"] == name)
+        name = st.selectbox("Client", [c["name"] for c in clients], key="client")
+        chosen = next(c for c in clients if c["name"] == name)
+        client = {**chosen, "rules": st.session_state.rules[chosen["id"]]}
         st.markdown(f"{client['age']}, {client['city']}")
         st.markdown(f"Looking for a {client['looking_for']}")
         st.markdown(f"Matchmaker: {client['matchmaker']}")
+        st.divider()
+        st.button("Reset learned rules", on_click=reset_rules, args=(clients,), key="reset_rules")
+        st.caption("Puts every client's rules back to the intake form.")
 
-    shortlist_screen(client, profiles)
+    shortlist_tab, feedback_tab = st.tabs(["Shortlist", "Rejection feedback"])
+    with shortlist_tab:
+        shortlist_screen(client, profiles)
+    with feedback_tab:
+        feedback_screen(client, profiles, examples)
 
 
 if __name__ == "__main__":
