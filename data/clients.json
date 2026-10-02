@@ -1,0 +1,51 @@
+[
+  {
+    "id": "c1",
+    "name": "Priya Nair",
+    "age": 29,
+    "city": "Bangalore",
+    "looking_for": "man",
+    "matchmaker": "Riya",
+    "rules": [
+      {"field": "smokes", "kind": "one_of", "value": ["no"], "strength": "deal-breaker", "source": "intake form"},
+      {"field": "wants_children", "kind": "one_of", "value": ["yes", "open"], "strength": "deal-breaker", "source": "intake form"},
+      {"field": "age", "kind": "between", "value": [28, 34], "strength": "deal-breaker", "source": "intake form"},
+      {"field": "city", "kind": "one_of", "value": ["Bangalore"], "strength": "flexible", "source": "intake form"},
+      {"field": "height_cm", "kind": "at_least", "value": 172, "strength": "flexible", "source": "intake form"},
+      {"field": "diet", "kind": "one_of", "value": ["vegetarian", "eggetarian"], "strength": "flexible", "source": "intake form"},
+      {"field": "education", "kind": "one_of", "value": ["master's", "doctorate"], "strength": "flexible", "source": "intake form"}
+    ]
+  },
+  {
+    "id": "c2",
+    "name": "Arjun Patel",
+    "age": 32,
+    "city": "Mumbai",
+    "looking_for": "woman",
+    "matchmaker": "Riya",
+    "rules": [
+      {"field": "religion", "kind": "one_of", "value": ["Hindu", "Jain"], "strength": "deal-breaker", "source": "intake form"},
+      {"field": "diet", "kind": "one_of", "value": ["vegetarian"], "strength": "deal-breaker", "source": "intake form"},
+      {"field": "marital_status", "kind": "one_of", "value": ["never married"], "strength": "deal-breaker", "source": "intake form"},
+      {"field": "age", "kind": "between", "value": [26, 31], "strength": "flexible", "source": "intake form"},
+      {"field": "city", "kind": "one_of", "value": ["Mumbai", "Pune"], "strength": "flexible", "source": "intake form"},
+      {"field": "drinks", "kind": "one_of", "value": ["never", "socially"], "strength": "flexible", "source": "intake form"}
+    ]
+  },
+  {
+    "id": "c3",
+    "name": "Meera Khanna",
+    "age": 34,
+    "city": "Delhi",
+    "looking_for": "man",
+    "matchmaker": "Dev",
+    "rules": [
+      {"field": "age", "kind": "between", "value": [33, 40], "strength": "deal-breaker", "source": "intake form"},
+      {"field": "wants_children", "kind": "one_of", "value": ["no", "open"], "strength": "deal-breaker", "source": "intake form"},
+      {"field": "education", "kind": "one_of", "value": ["master's", "doctorate"], "strength": "flexible", "source": "intake form"},
+      {"field": "height_cm", "kind": "at_least", "value": 175, "strength": "flexible", "source": "intake form"},
+      {"field": "smokes", "kind": "one_of", "value": ["no"], "strength": "flexible", "source": "intake form"},
+      {"field": "city", "kind": "one_of", "value": ["Delhi", "Gurgaon"], "strength": "flexible", "source": "intake form"}
+    ]
+  }
+]
