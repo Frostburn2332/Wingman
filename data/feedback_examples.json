@@ -1,0 +1,130 @@
+[
+  {
+    "id": "f1",
+    "client_id": "c1",
+    "profile_id": "m01",
+    "reply": "Rahul seems nice, but I've said before that I can't be with someone who smokes.",
+    "saved_reading": {
+      "category": "lifestyle",
+      "field": "smokes",
+      "accepted_values": ["no"],
+      "minimum": null,
+      "maximum": null,
+      "strength": "deal-breaker",
+      "evidence": "I can't be with someone who smokes"
+    },
+    "expected_outcome": "already_known"
+  },
+  {
+    "id": "f2",
+    "client_id": "c1",
+    "profile_id": "m04",
+    "reply": "He's lovely, but he lives in Hyderabad and I can't move out of Bangalore, my parents are here.",
+    "saved_reading": {
+      "category": "location",
+      "field": "city",
+      "accepted_values": ["Bangalore"],
+      "minimum": null,
+      "maximum": null,
+      "strength": "deal-breaker",
+      "evidence": "I can't move out of Bangalore"
+    },
+    "expected_outcome": "suggested_change"
+  },
+  {
+    "id": "f3",
+    "client_id": "c1",
+    "profile_id": "m02",
+    "reply": "Nice profile, I just didn't feel a spark.",
+    "saved_reading": {
+      "category": "chemistry",
+      "field": "none",
+      "accepted_values": [],
+      "minimum": null,
+      "maximum": null,
+      "strength": "unclear",
+      "evidence": "I just didn't feel a spark"
+    },
+    "expected_outcome": "no_clear_rule"
+  },
+  {
+    "id": "f4",
+    "client_id": "c2",
+    "profile_id": "w05",
+    "reply": "She eats meat. We're a strictly vegetarian family, and I did mention this at the start.",
+    "saved_reading": {
+      "category": "lifestyle",
+      "field": "diet",
+      "accepted_values": ["vegetarian"],
+      "minimum": null,
+      "maximum": null,
+      "strength": "deal-breaker",
+      "evidence": "We're a strictly vegetarian family"
+    },
+    "expected_outcome": "already_known"
+  },
+  {
+    "id": "f5",
+    "client_id": "c2",
+    "profile_id": "w03",
+    "reply": "Tanvi drinks regularly. I'm not comfortable with that, it's a firm no.",
+    "saved_reading": {
+      "category": "lifestyle",
+      "field": "drinks",
+      "accepted_values": ["never", "socially"],
+      "minimum": null,
+      "maximum": null,
+      "strength": "deal-breaker",
+      "evidence": "I'm not comfortable with that, it's a firm no"
+    },
+    "expected_outcome": "suggested_change"
+  },
+  {
+    "id": "f6",
+    "client_id": "c3",
+    "profile_id": "m10",
+    "reply": "He wants kids and I've been clear that I don't.",
+    "saved_reading": {
+      "category": "family plans",
+      "field": "wants_children",
+      "accepted_values": ["no"],
+      "minimum": null,
+      "maximum": null,
+      "strength": "deal-breaker",
+      "evidence": "He wants kids and I've been clear that I don't"
+    },
+    "expected_outcome": "already_known"
+  },
+  {
+    "id": "f7",
+    "client_id": "c3",
+    "profile_id": "m06",
+    "reply": "I'd rather not date someone who has been married before.",
+    "saved_reading": {
+      "category": "marital history",
+      "field": "marital_status",
+      "accepted_values": ["never married"],
+      "minimum": null,
+      "maximum": null,
+      "strength": "flexible",
+      "evidence": "I'd rather not date someone who has been married before"
+    },
+    "expected_outcome": "new_rule"
+  },
+  {
+    "id": "f8",
+    "client_id": "c3",
+    "profile_id": "m12",
+    "reply": "Something felt off, I can't put my finger on it.",
+    "saved_reading": {
+      "category": "chemistry",
+      "field": "none",
+      "accepted_values": [],
+      "minimum": null,
+      "maximum": null,
+      "strength": "unclear",
+      "evidence": "Something felt off"
+    },
+    "expected_outcome": "no_clear_rule"
+  }
+]
