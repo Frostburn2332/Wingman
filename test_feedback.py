@@ -9,9 +9,14 @@ from feedback import (
     LEARNED,
     NEW_RULE,
     NO_CLEAR_RULE,
+    NO_VALUE,
+    NOTHING_NEW,
+    READING_SCHEMA,
     SUGGESTED_CHANGE,
+    VAGUE,
     apply_rule,
     build_prompt,
+    check_reading,
     decide_outcome,
     read_feedback,
     reading_to_rule,
@@ -61,13 +66,66 @@ def test_no_example_raises_a_caution(example):
     assert outcome_for(example["id"])["caution"] is False
 
 
-def test_example_replies_are_read_from_their_saved_readings():
+def test_without_a_key_example_replies_are_read_from_their_saved_readings():
     example = BY_ID["f2"]
-    assert read_feedback(example["reply"], EXAMPLES) == (example["saved_reading"], "saved")
+    assert read_feedback(example["reply"], EXAMPLES) == {
+        "reading": example["saved_reading"], "source": "saved", "model": None, "error": None,
+    }
 
 
-def test_other_text_cannot_be_read_yet():
-    assert read_feedback("He is too far away.", EXAMPLES) == (None, None)
+def test_without_a_key_other_text_cannot_be_read():
+    assert read_feedback("He is too far away.", EXAMPLES)["reading"] is None
+
+
+# --- reading live -----------------------------------------------------------
+
+def test_live_reading_is_used_when_it_works():
+    live_answer = reading("city", DEAL_BREAKER, ["Bangalore"])
+    result = read_feedback("He is too far away.", EXAMPLES, live=lambda reply: (live_answer, "test-model"))
+    assert result == {"reading": live_answer, "source": "live", "model": "test-model", "error": None}
+
+
+def busy(reply):
+    raise RuntimeError("503 model is busy")
+
+
+def test_failed_live_reading_falls_back_to_the_saved_example():
+    example = BY_ID["f7"]
+    result = read_feedback(example["reply"], EXAMPLES, live=busy)
+    assert (result["reading"], result["source"]) == (example["saved_reading"], "saved")
+    assert result["error"] == "503 model is busy"
+
+
+def test_failed_live_reading_of_other_text_reports_the_error():
+    result = read_feedback("He is too far away.", EXAMPLES, live=busy)
+    assert (result["reading"], result["source"], result["error"]) == (None, None, "503 model is busy")
+
+
+def test_check_reading_accepts_every_saved_example():
+    for example in EXAMPLES:
+        assert check_reading(example["saved_reading"]) == example["saved_reading"]
+
+
+@pytest.mark.parametrize("change", [
+    {"strength": "maybe"},
+    {"field": "income"},
+    {"category": "weather"},
+])
+def test_check_reading_rejects_values_outside_the_lists(change):
+    bad = {**BY_ID["f2"]["saved_reading"], **change}
+    with pytest.raises(ValueError):
+        check_reading(bad)
+
+
+def test_check_reading_rejects_a_missing_field():
+    bad = dict(BY_ID["f2"]["saved_reading"])
+    del bad["evidence"]
+    with pytest.raises(ValueError):
+        check_reading(bad)
+
+
+def test_schema_requires_every_reading_field():
+    assert set(READING_SCHEMA["required"]) == set(BY_ID["f2"]["saved_reading"])
 
 
 # --- the loop closes: an approved rule changes the shortlist ----------------
@@ -100,7 +158,15 @@ def test_a_new_flexible_rule_warns_but_does_not_block():
 # --- deciding the outcome ---------------------------------------------------
 
 def test_vague_reply_gives_no_rule():
-    assert decide_outcome(reading("none", "unclear"), PRIYA["rules"], PROFILES["m02"])["outcome"] == NO_CLEAR_RULE
+    result = decide_outcome(reading("none", "unclear"), PRIYA["rules"], PROFILES["m02"])
+    assert (result["outcome"], result["why"]) == (NO_CLEAR_RULE, VAGUE)
+
+
+def test_firm_reason_on_a_new_field_without_values_says_so():
+    # "I can't be with a heavy drinker", read as drinks + deal-breaker but no accepted values.
+    no_values = reading("drinks", DEAL_BREAKER)
+    result = decide_outcome(no_values, PRIYA["rules"], PROFILES["m20"])
+    assert (result["outcome"], result["why"]) == (NO_CLEAR_RULE, NO_VALUE)
 
 
 def test_field_without_a_firm_or_hedged_reason_gives_no_rule():
@@ -143,7 +209,8 @@ def test_a_rejection_never_loosens_a_deal_breaker():
 def test_reading_that_matches_the_record_changes_nothing():
     # Karthik is a non-smoker, so a "non-smokers only" reading adds nothing new.
     same = reading("smokes", DEAL_BREAKER, ["no"])
-    assert decide_outcome(same, PRIYA["rules"], PROFILES["m02"])["outcome"] == NO_CLEAR_RULE
+    result = decide_outcome(same, PRIYA["rules"], PROFILES["m02"])
+    assert (result["outcome"], result["why"]) == (NO_CLEAR_RULE, NOTHING_NEW)
 
 
 def test_caution_when_the_rejected_profile_would_pass_the_suggested_rule():
@@ -196,3 +263,8 @@ def test_prompt_contains_the_reply_and_the_field_list_but_no_client_rules():
     assert prompt.rstrip().endswith("He lives too far away.")
     assert "- drinks: never / socially / regularly" in prompt
     assert "Priya" not in prompt
+
+
+def test_prompt_asks_for_what_the_client_would_accept_not_what_they_reject():
+    one_line = " ".join(build_prompt("x").split())
+    assert "list what they would accept instead" in one_line

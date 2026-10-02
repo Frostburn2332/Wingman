@@ -8,7 +8,16 @@ Two halves, kept apart on purpose:
    the rejected profile) is plain Python, so it is exact and testable.
 """
 
+import json
+
+from google import genai
+from google.genai import types
+
 from checker import DEAL_BREAKER, FIELD_LABELS, FLEXIBLE, rule_passes
+
+# Tried in order. The first is fast and got all eight example replies right
+# in testing; the second is a fallback for when the first is busy.
+DEFAULT_MODELS = ["gemini-3.5-flash-lite", "gemini-flash-latest"]
 
 NO_CLEAR_RULE = "no_clear_rule"
 ALREADY_KNOWN = "already_known"
@@ -17,6 +26,11 @@ NEW_RULE = "new_rule"
 
 UNCLEAR = "unclear"
 LEARNED = "learned from feedback"
+
+# Why a reading gave no clear rule.
+VAGUE = "vague"
+NO_VALUE = "no_value"
+NOTHING_NEW = "nothing_new"
 
 CATEGORIES = [
     "lifestyle",
@@ -49,11 +63,32 @@ FIELD_OPTIONS = {
 READING_FIELDS = {
     "category": f"one of: {', '.join(CATEGORIES)}",
     "field": f"the profile field the reason is about ({', '.join(FIELD_OPTIONS)}), or \"none\"",
-    "accepted_values": "for a text field: the values the client WOULD accept. Empty otherwise",
+    "accepted_values": (
+        "for a text field: every value the client WOULD accept, taken from the values listed "
+        "above. Empty only when field is none, age or height"
+    ),
     "minimum": "for age or height: the lowest number the client would accept, or null",
     "maximum": "for age: the highest number the client would accept, or null",
     "strength": f"\"{DEAL_BREAKER}\", \"{FLEXIBLE}\" or \"{UNCLEAR}\"",
     "evidence": "the exact phrase from the reply that supports this, copied word for word",
+}
+
+STRENGTHS = [DEAL_BREAKER, FLEXIBLE, UNCLEAR]
+
+# The same fields as a JSON schema, so the model can only answer in this shape.
+READING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "category": {"type": "string", "enum": CATEGORIES},
+        "field": {"type": "string", "enum": [*FIELD_OPTIONS, "none"]},
+        "accepted_values": {"type": "array", "items": {"type": "string"}},
+        "minimum": {"type": ["number", "null"]},
+        "maximum": {"type": ["number", "null"]},
+        "strength": {"type": "string", "enum": STRENGTHS},
+        "evidence": {"type": "string"},
+    },
+    "required": list(READING_FIELDS),
+    "additionalProperties": False,
 }
 
 PROMPT = """\
@@ -77,6 +112,10 @@ How to choose the strength:
 If the reason is vague ("no spark", "something felt off") or is not about any \
 listed field, set field to "none" and strength to "unclear". A vague feeling \
 is not a rule.
+
+When the reply names what the client does not want, list what they would \
+accept instead. For example, "I can't be with a heavy drinker" means drinks: \
+never, socially.
 
 If the reply gives several reasons, use the one the client states most firmly.
 
@@ -106,15 +145,65 @@ def saved_reading(reply, examples):
     return None
 
 
-def read_feedback(reply, examples):
-    """Read a reply. Returns (reading, source), or (None, None) if it cannot be read.
+def check_reading(reading):
+    """Raise ValueError unless the reading has every field with an allowed value."""
+    missing = [name for name in READING_FIELDS if name not in reading]
+    if missing:
+        raise ValueError(f"Reading is missing: {', '.join(missing)}")
+    if reading["category"] not in CATEGORIES:
+        raise ValueError(f"Unknown category: {reading['category']}")
+    if reading["field"] not in [*FIELD_OPTIONS, "none"]:
+        raise ValueError(f"Unknown field: {reading['field']}")
+    if reading["strength"] not in STRENGTHS:
+        raise ValueError(f"Unknown strength: {reading['strength']}")
+    return reading
 
-    Only the example replies can be read so far, from their saved readings.
+
+def live_reading(reply, api_key, models=DEFAULT_MODELS):
+    """Ask Gemini to read a reply. Returns (reading, model name).
+
+    Tries each model in turn and raises the last error if none answers.
     """
+    client = genai.Client(api_key=api_key)
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_json_schema=READING_SCHEMA,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+    )
+    error = None
+    for model in models:
+        try:
+            response = client.models.generate_content(model=model, contents=build_prompt(reply), config=config)
+            return check_reading(json.loads(response.text)), model
+        except Exception as exc:  # busy model, quota, network or a malformed answer: try the next one
+            error = exc
+    raise error
+
+
+def read_feedback(reply, examples, live=None):
+    """Read a reply, live if possible and from the saved examples otherwise.
+
+    `live` is a function that takes the reply and returns (reading, model
+    name), or None when there is no API key. Returns a dict with the
+    reading (None if the reply could not be read), its source ("live",
+    "saved" or None), the model used, and any live error.
+    """
+    error = None
+    if live is not None:
+        try:
+            reading, model = live(reply)
+            return {"reading": reading, "source": "live", "model": model, "error": None}
+        except Exception as exc:
+            # Gemini errors carry a readable message; anything else falls back to its text.
+            error = getattr(exc, "message", None) or str(exc) or type(exc).__name__
+
     reading = saved_reading(reply, examples)
-    if reading is None:
-        return None, None
-    return reading, "saved"
+    return {
+        "reading": reading,
+        "source": "saved" if reading is not None else None,
+        "model": None,
+        "error": error,
+    }
 
 
 def reading_to_rule(reading, existing=None):
@@ -152,21 +241,23 @@ def decide_outcome(reading, rules, rejected_profile):
     Returns the outcome, the rule to suggest (if any), the existing rule on
     that field (if any), and a caution flag that is set when the rejected
     profile would still pass the suggested rule, which means the reading
-    deserves a second look.
+    deserves a second look. When there is no clear rule, `why` says whether
+    the reply was vague, named a field without a checkable value, or said
+    nothing new.
     """
-    def result(outcome, rule=None, existing=None):
+    def result(outcome, rule=None, existing=None, why=None):
         caution = rule is not None and rule_passes(rule, rejected_profile.get(rule["field"])) is not False
-        return {"outcome": outcome, "rule": rule, "existing_rule": existing, "caution": caution}
+        return {"outcome": outcome, "rule": rule, "existing_rule": existing, "caution": caution, "why": why}
 
     field, strength = reading.get("field"), reading.get("strength")
     if field not in FIELD_LABELS or strength not in (DEAL_BREAKER, FLEXIBLE):
-        return result(NO_CLEAR_RULE)
+        return result(NO_CLEAR_RULE, why=VAGUE)
 
     existing = next((rule for rule in rules if rule["field"] == field), None)
     suggested = reading_to_rule(reading, existing)
 
     if existing is None:
-        return result(NEW_RULE, suggested) if suggested else result(NO_CLEAR_RULE)
+        return result(NEW_RULE, suggested) if suggested else result(NO_CLEAR_RULE, why=NO_VALUE)
 
     broke_existing = rule_passes(existing, rejected_profile.get(field)) is False
     on_record_as_strongly = existing["strength"] == DEAL_BREAKER or strength == FLEXIBLE
@@ -175,7 +266,7 @@ def decide_outcome(reading, rules, rejected_profile):
 
     if suggested is None:
         if not broke_existing:
-            return result(NO_CLEAR_RULE, existing=existing)
+            return result(NO_CLEAR_RULE, existing=existing, why=NO_VALUE)
         # Firmer than the record but no new value given: keep the value, raise the strength.
         suggested = {**existing, "strength": strength, "source": LEARNED}
 
@@ -184,7 +275,7 @@ def decide_outcome(reading, rules, rejected_profile):
         suggested["strength"] = DEAL_BREAKER
     unchanged = all(suggested[key] == existing[key] for key in ("kind", "value", "strength"))
     if unchanged:
-        return result(NO_CLEAR_RULE, existing=existing)
+        return result(NO_CLEAR_RULE, existing=existing, why=NOTHING_NEW)
     return result(SUGGESTED_CHANGE, suggested, existing)
 
 

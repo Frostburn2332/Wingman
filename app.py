@@ -1,10 +1,12 @@
 """Wingman: a matchmaker's shortlist. Run with `streamlit run app.py`."""
 
 import json
+import os
 from collections import Counter
 from pathlib import Path
 
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 
 from checker import (
     BLOCKED,
@@ -18,12 +20,17 @@ from checker import (
 )
 from feedback import (
     ALREADY_KNOWN,
+    DEFAULT_MODELS,
     NEW_RULE,
     NO_CLEAR_RULE,
+    NO_VALUE,
+    NOTHING_NEW,
     SUGGESTED_CHANGE,
+    VAGUE,
     apply_rule,
     build_prompt,
     decide_outcome,
+    live_reading,
     read_feedback,
     reading_to_rule,
 )
@@ -38,6 +45,15 @@ STATUS_LABELS = {
 
 WRITE_OWN = "Write your own reply"
 
+NO_RULE_REASONS = {
+    VAGUE: "Nothing is suggested, because a vague feeling is not a rule.",
+    NO_VALUE: (
+        "The reply names a preference but not what would be acceptable, so there is "
+        "nothing exact to check. Ask the client, or try rewording the reply."
+    ),
+    NOTHING_NEW: "The client's rules already say this, so there is nothing to change.",
+}
+
 # Shown on the second line of a profile card. Age, height and city are on the first.
 DETAIL_FIELDS = ["religion", "diet", "smokes", "drinks", "wants_children", "marital_status", "education"]
 
@@ -45,6 +61,24 @@ DETAIL_FIELDS = ["religion", "diet", "smokes", "drinks", "wants_children", "mari
 @st.cache_data
 def load(filename):
     return json.loads((DATA / filename).read_text())
+
+
+def setting(name):
+    """An environment variable if set, otherwise a Streamlit secret, otherwise None.
+
+    Locally the key lives in .streamlit/secrets.toml; in a container it is
+    passed as an environment variable.
+    """
+    if os.environ.get(name):
+        return os.environ[name]
+    try:
+        return st.secrets.get(name)
+    except StreamlitSecretNotFoundError:
+        return None
+
+
+def short(error, limit=200):
+    return error if len(error) <= limit else error[:limit] + "..."
 
 
 def pick_key(client, profile):
@@ -194,17 +228,15 @@ def fill_example(client, examples_by_label, profiles):
     st.session_state.pop(result_key(client), None)
 
 
-def read_reply(client, examples):
+def read_reply(client, examples, live):
     reply = st.session_state.get(reply_key(client), "").strip()
     if not reply:
-        st.session_state[result_key(client)] = {"error": "Pick an example or paste a reply first."}
+        st.session_state[result_key(client)] = {"empty": True}
         return
-    reading, source = read_feedback(reply, examples)
     st.session_state[result_key(client)] = {
         "reply": reply,
         "profile_name": st.session_state[rejected_key(client)],
-        "reading": reading,
-        "source": source,
+        **read_feedback(reply, examples, live),
         "added": None,
     }
 
@@ -225,7 +257,8 @@ def add_rule(client, profiles, rule):
     }
 
 
-def show_reading(reading, source, existing):
+def show_reading(result, existing):
+    reading = result["reading"]
     rule = reading_to_rule(reading, existing)
     field = reading["field"]
     st.markdown("\n".join([
@@ -235,14 +268,18 @@ def show_reading(reading, source, existing):
         f"- **Strength:** {reading['strength']}",
         f"- **Supporting phrase:** \"{reading['evidence']}\"",
     ]))
-    if source == "saved":
-        st.caption("Source: saved example output. The live AI call is not connected yet.")
+    if result["source"] == "live":
+        st.caption(f"Source: live reading by {result['model']}.")
+    elif result["error"]:
+        st.caption(f"Source: saved example output, because the live reading failed: {short(result['error'])}")
+    else:
+        st.caption("Source: saved example output. No API key is set, so the live reading is off.")
 
 
 def show_decision(client, profiles, decision):
     outcome, rule, existing = decision["outcome"], decision["rule"], decision["existing_rule"]
     if outcome == NO_CLEAR_RULE:
-        st.info("**No clear rule.** Nothing is suggested, because a vague feeling is not a rule.")
+        st.info(f"**No clear rule.** {NO_RULE_REASONS[decision['why']]}")
         return
     if outcome == ALREADY_KNOWN:
         st.warning(
@@ -269,7 +306,7 @@ def show_decision(client, profiles, decision):
     st.caption("Nothing changes until you add the rule. The AI never edits a client's preferences on its own.")
 
 
-def feedback_screen(client, profiles, examples):
+def feedback_screen(client, profiles, examples, live):
     st.subheader("Rejection feedback")
     st.caption(
         "Paste the client's reply. It is turned into fixed fields, compared to "
@@ -293,19 +330,22 @@ def feedback_screen(client, profiles, examples):
     )
     st.selectbox("Profile that was rejected", [p["name"] for p in candidates], key=rejected_key(client))
     st.text_area("Client's reply", key=reply_key(client))
-    st.button("Read feedback", on_click=read_reply, args=(client, examples), key=f"read_{client['id']}")
+    st.button("Read feedback", on_click=read_reply, args=(client, examples, live), key=f"read_{client['id']}")
 
     result = st.session_state.get(result_key(client))
     if not result:
         return
-    if "error" in result:
-        st.error(result["error"])
+    if result.get("empty"):
+        st.error("Pick an example or paste a reply first.")
         return
     if result["reading"] is None:
-        st.info(
-            "Live reading is not available yet, so only the example replies can "
-            "be read. Pick one from the list above."
-        )
+        if result["error"]:
+            st.warning(
+                f"The live reading failed: {short(result['error'])} "
+                "Until it works again, only the example replies can be read."
+            )
+        else:
+            st.info("No API key is set, so only the example replies can be read. Pick one from the list above.")
         return
 
     profile = next(p for p in candidates if p["name"] == result["profile_name"])
@@ -313,7 +353,7 @@ def feedback_screen(client, profiles, examples):
     existing = next((r for r in client["rules"] if r["field"] == reading["field"]), None)
 
     st.markdown(f"**What {client['name']} said about {profile['name']}**")
-    show_reading(reading, result["source"], existing)
+    show_reading(result, existing)
 
     if result["added"]:
         added = result["added"]
@@ -352,6 +392,10 @@ def main():
     if "rules" not in st.session_state:
         st.session_state.rules = {c["id"]: c["rules"] for c in clients}
 
+    api_key = setting("GEMINI_API_KEY")
+    models = [setting("GEMINI_MODEL")] if setting("GEMINI_MODEL") else DEFAULT_MODELS
+    live = (lambda reply: live_reading(reply, api_key, models)) if api_key else None
+
     st.title("Wingman")
     st.caption(
         "A shortlist that keeps out profiles a client has already said no to, "
@@ -368,12 +412,17 @@ def main():
         st.divider()
         st.button("Reset learned rules", on_click=reset_rules, args=(clients,), key="reset_rules")
         st.caption("Puts every client's rules back to the intake form.")
+        st.divider()
+        if live:
+            st.caption(f"AI reading: live, using {models[0]}.")
+        else:
+            st.caption("AI reading: off, because no API key is set. Example replies use saved outputs.")
 
     shortlist_tab, feedback_tab = st.tabs(["Shortlist", "Rejection feedback"])
     with shortlist_tab:
         shortlist_screen(client, profiles)
     with feedback_tab:
-        feedback_screen(client, profiles, examples)
+        feedback_screen(client, profiles, examples, live)
 
 
 if __name__ == "__main__":
