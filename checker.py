@@ -119,11 +119,23 @@ def candidates_for(client, profiles):
     return [p for p in profiles if p["gender"] == client["looking_for"]]
 
 
+REJECTED_REASON = {
+    "field": None,
+    "strength": DEAL_BREAKER,
+    "not_stated": False,
+    "text": "Already rejected by this client",
+}
+
+
 def shortlist(client, profiles):
     """Every candidate for a client with its check result, fits first,
-    then warnings, then blocked."""
-    checked = [
-        {"profile": p, **check_profile(p, client["rules"])}
-        for p in candidates_for(client, profiles)
-    ]
+    then warnings, then blocked. A profile the client has already rejected
+    is blocked, whatever the rules say."""
+    rejected = set(client.get("rejected", []))
+    checked = []
+    for profile in candidates_for(client, profiles):
+        result = check_profile(profile, client["rules"])
+        if profile["id"] in rejected:
+            result = {"status": BLOCKED, "reasons": [REJECTED_REASON, *result["reasons"]]}
+        checked.append({"profile": profile, **result})
     return sorted(checked, key=lambda c: STATUS_ORDER[c["status"]])

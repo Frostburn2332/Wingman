@@ -141,6 +141,23 @@ def test_shortlist_is_ordered_fits_then_warnings_then_blocked():
     assert statuses == [FITS] * 5 + [WARNING] * 5 + [BLOCKED] * 6
 
 
+def test_a_rejected_profile_is_blocked_whatever_the_rules_say():
+    # Karthik fits every one of Priya's rules, but she has rejected him.
+    priya = {**CLIENTS["Priya Nair"], "rejected": [BY_NAME["Karthik Iyer"]["id"]]}
+    karthik = next(c for c in shortlist(priya, PROFILES) if c["profile"]["name"] == "Karthik Iyer")
+    assert karthik["status"] == BLOCKED
+    assert [r["text"] for r in karthik["reasons"]] == ["Already rejected by this client"]
+
+
+def test_a_rejected_profile_keeps_its_other_reasons_after_the_rejection():
+    priya = {**CLIENTS["Priya Nair"], "rejected": [BY_NAME["Vikram Shetty"]["id"]]}
+    vikram = next(c for c in shortlist(priya, PROFILES) if c["profile"]["name"] == "Vikram Shetty")
+    assert [r["text"] for r in vikram["reasons"]] == [
+        "Already rejected by this client",
+        "City: Hyderabad (flexible preference: Bangalore)",
+    ]
+
+
 @pytest.mark.parametrize("client, fits, warnings, blocked", [
     ("Priya Nair", 4, 6, 10),
     ("Arjun Patel", 5, 5, 6),

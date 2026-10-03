@@ -160,12 +160,17 @@ def send_selected(client, checked):
         "Blocked profiles included": ", ".join(c["profile"]["name"] for c in blocked) or "none",
         "Override reason": reason if blocked else "",
     })
+    # Feedback is about the latest list, so it replaces the previous one.
+    st.session_state.sent[client["id"]] = [c["profile"]["id"] for c in picked]
     for c in picked:
         st.session_state[pick_key(client, c["profile"])] = False
     st.session_state[override_key(client)] = ""
+    clear_feedback(client)
+    st.session_state.lists_sent[client["id"]] += 1
     st.session_state.flash = (
         "success",
-        f"Logged {len(picked)} profile(s) for {client['name']}. Nothing was emailed.",
+        f"Logged {len(picked)} profile(s) for {client['name']}. Nothing was emailed. "
+        "The rejection feedback screen is cleared for the new list.",
     )
 
 
@@ -237,7 +242,9 @@ def example_key(client):
 
 
 def rejected_key(client):
-    return f"rejected_{client['id']}"
+    # A new key for each list sent, so the box starts afresh instead of
+    # showing a name from the previous list.
+    return f"rejected_{client['id']}_{st.session_state.lists_sent[client['id']]}"
 
 
 def reply_key(client):
@@ -246,6 +253,14 @@ def reply_key(client):
 
 def result_key(client):
     return f"result_{client['id']}"
+
+
+def clear_feedback(client):
+    """Start the rejection feedback screen afresh, as when a new list goes out."""
+    st.session_state[example_key(client)] = WRITE_OWN
+    st.session_state[reply_key(client)] = ""
+    st.session_state.pop(rejected_key(client), None)
+    st.session_state.pop(result_key(client), None)
 
 
 def fill_example(client, examples_by_label, profiles):
@@ -258,14 +273,18 @@ def fill_example(client, examples_by_label, profiles):
     st.session_state.pop(result_key(client), None)
 
 
-def read_reply(client, examples, live):
+def read_reply(client, examples, live, sent):
+    """Record the rejection and read the client's reply."""
     reply = st.session_state.get(reply_key(client), "").strip()
     if not reply:
         st.session_state[result_key(client)] = {"empty": True}
         return
+    profile = next(p for p in sent if p["name"] == st.session_state[rejected_key(client)])
+    if profile["id"] not in st.session_state.rejected[client["id"]]:
+        st.session_state.rejected[client["id"]].append(profile["id"])
     st.session_state[result_key(client)] = {
         "reply": reply,
-        "profile_name": st.session_state[rejected_key(client)],
+        "profile_name": profile["name"],
         **read_feedback(reply, examples, live),
         "added": None,
         "added_note": None,
@@ -392,11 +411,18 @@ def feedback_screen(client, profiles, examples, live):
     )
 
     candidates = candidates_for(client, profiles)
-    names = {p["id"]: p["name"] for p in candidates}
+    by_id = {p["id"]: p for p in candidates}
+    # Feedback is about the latest list sent to this client, and only that list.
+    sent = [by_id[pid] for pid in st.session_state.sent[client["id"]]]
+    if not sent:
+        st.info(f"Nothing has been sent to {client['name']} yet. Send a list from the Shortlist tab first.")
+        return
+
+    names = {p["id"]: p["name"] for p in sent}
     examples_by_label = {
         f"{names[e['profile_id']]}: \"{e['reply']}\"": e
         for e in examples
-        if e["client_id"] == client["id"]
+        if e["client_id"] == client["id"] and e["profile_id"] in names
     }
 
     st.selectbox(
@@ -406,9 +432,20 @@ def feedback_screen(client, profiles, examples, live):
         on_change=fill_example,
         args=(client, examples_by_label, candidates),
     )
-    st.selectbox("Profile that was rejected", [p["name"] for p in candidates], key=rejected_key(client))
+    st.selectbox(
+        "Profile that was rejected",
+        [p["name"] for p in sent],
+        key=rejected_key(client),
+        help="Only the profiles in the latest list sent to this client are listed.",
+    )
     st.text_area("Client's reply", key=reply_key(client))
-    st.button("Read feedback", on_click=read_reply, args=(client, examples, live), key=f"read_{client['id']}")
+    st.button(
+        "Read feedback",
+        on_click=read_reply,
+        args=(client, examples, live, sent),
+        key=f"read_{client['id']}",
+    )
+    st.caption("Reading a reply records the rejection, and that profile is blocked on the shortlist from then on.")
 
     result = st.session_state.get(result_key(client))
     if not result:
@@ -460,26 +497,34 @@ def feedback_screen(client, profiles, examples, live):
         st.code(build_prompt(result["reply"]), language=None, wrap_lines=True)
 
 
-def reset_rules(clients):
+def start_fresh(clients):
+    """Every client back to their intake form, with nothing sent or rejected."""
     st.session_state.rules = {c["id"]: c["rules"] for c in clients}
     st.session_state.notes = {c["id"]: [] for c in clients}
+    st.session_state.sent = {c["id"]: [] for c in clients}
+    st.session_state.rejected = {c["id"]: [] for c in clients}
+    st.session_state.send_log = []
+
+
+def reset_demo(clients):
+    start_fresh(clients)
     for c in clients:
-        st.session_state.pop(result_key(c), None)
+        clear_feedback(c)
+        st.session_state.pop(f"show_blocked_{c['id']}", None)
 
 
 def main():
     st.set_page_config(page_title="Wingman", layout="wide")
-    st.session_state.setdefault("send_log", [])
 
     clients = load("clients.json")
     profiles = load("profiles.json")
     examples = load("feedback_examples.json")
 
-    # Rules and notes live in the session so that approved ones take effect. They reset on refresh.
+    # Rules, notes, sends and rejections live in the session. They reset on refresh.
     if "rules" not in st.session_state:
-        st.session_state.rules = {c["id"]: c["rules"] for c in clients}
-    if "notes" not in st.session_state:
-        st.session_state.notes = {c["id"]: [] for c in clients}
+        start_fresh(clients)
+    # Counts the lists sent to each client. Never reset, so every list gets a fresh dropdown.
+    st.session_state.setdefault("lists_sent", {c["id"]: 0 for c in clients})
 
     api_key = setting("GEMINI_API_KEY")
     models = [setting("GEMINI_MODEL")] if setting("GEMINI_MODEL") else DEFAULT_MODELS
@@ -498,13 +543,14 @@ def main():
             **chosen,
             "rules": st.session_state.rules[chosen["id"]],
             "notes": st.session_state.notes[chosen["id"]],
+            "rejected": st.session_state.rejected[chosen["id"]],
         }
         st.markdown(f"{client['age']}, {client['city']}")
         st.markdown(f"Looking for a {client['looking_for']}")
         st.markdown(f"Matchmaker: {client['matchmaker']}")
         st.divider()
-        st.button("Reset learned rules", on_click=reset_rules, args=(clients,), key="reset_rules")
-        st.caption("Puts every client's rules back to the intake form and clears learned notes.")
+        st.button("Start over", on_click=reset_demo, args=(clients,), key="reset_demo")
+        st.caption("Puts every client back to their intake form and clears sends, rejections, rules and notes.")
         st.divider()
         if live:
             st.caption(f"AI reading: live, using {models[0]}.")
