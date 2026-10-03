@@ -16,6 +16,7 @@ from checker import (
     candidates_for,
     describe_rule,
     format_value,
+    intake_gaps,
     shortlist,
 )
 from feedback import (
@@ -89,16 +90,25 @@ def override_key(client):
     return f"override_{client['id']}"
 
 
-def rules_table(rules):
-    return [
+def rules_table(client):
+    """Every intake question: the client's rules first, then the fields they
+    answered "no preference" to."""
+    rows = [
         {
             "Preference": FIELD_LABELS[rule["field"]],
             "Accepts": describe_rule(rule),
             "Strength": rule["strength"],
             "Source": rule["source"],
         }
-        for rule in rules
+        for rule in client["rules"]
     ]
+    with_rule = {rule["field"] for rule in client["rules"]}
+    rows += [
+        {"Preference": FIELD_LABELS[field], "Accepts": "anything", "Strength": "no preference", "Source": "intake form"}
+        for field in FIELD_LABELS
+        if field in client.get("no_preference", []) and field not in with_rule
+    ]
+    return rows
 
 
 def profile_card(client, item):
@@ -146,8 +156,14 @@ def send_selected(client, checked):
 
 
 def shortlist_screen(client, profiles):
-    st.subheader(f"{client['name']}'s rules")
-    st.dataframe(rules_table(client["rules"]), hide_index=True, width="stretch")
+    st.subheader(f"{client['name']}'s preferences")
+    gaps = intake_gaps(client)
+    if gaps:
+        st.warning(
+            "The intake form is incomplete. Not yet asked: "
+            + ", ".join(FIELD_LABELS[field] for field in gaps) + "."
+        )
+    st.dataframe(rules_table(client), hide_index=True, width="stretch")
 
     checked = shortlist(client, profiles)
     counts = Counter(item["status"] for item in checked)
@@ -290,7 +306,13 @@ def show_decision(client, profiles, decision):
     if outcome == SUGGESTED_CHANGE:
         st.info(f"**Suggested change.** On record: {rule_text(existing)}. Suggested: {rule_text(rule)}.")
     elif outcome == NEW_RULE:
-        st.info(f"**New: suggested rule.** {rule_text(rule)}.")
+        message = f"**New: suggested rule.** {rule_text(rule)}."
+        if rule["field"] in client.get("no_preference", []):
+            message += (
+                f" At intake, {client['name']} said they had no preference on this, "
+                "so what they said and how they choose differ."
+            )
+        st.info(message)
     if decision["caution"]:
         st.warning(
             "The rejected profile would still pass this rule, so it may not be "

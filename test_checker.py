@@ -8,9 +8,11 @@ from checker import (
     BLOCKED,
     FITS,
     WARNING,
+    FIELD_LABELS,
     candidates_for,
     check_profile,
     describe_rule,
+    intake_gaps,
     rule_passes,
     shortlist,
 )
@@ -94,6 +96,29 @@ def test_blocked_profile_lists_every_broken_rule():
     result = check_profile(BY_NAME["Anand Verma"], CLIENTS["Priya Nair"]["rules"])
     assert result["status"] == BLOCKED
     assert {r["field"] for r in result["reasons"]} == {"smokes", "wants_children", "age", "city", "education"}
+
+
+# --- the intake form --------------------------------------------------------
+
+@pytest.mark.parametrize("client", CLIENTS.values(), ids=lambda c: c["name"])
+def test_every_client_answered_every_intake_question(client):
+    assert intake_gaps(client) == []
+
+
+@pytest.mark.parametrize("client", CLIENTS.values(), ids=lambda c: c["name"])
+def test_no_field_is_both_a_rule_and_no_preference(client):
+    assert not {r["field"] for r in client["rules"]} & set(client["no_preference"])
+
+
+def test_unanswered_questions_are_reported_in_form_order():
+    partial = {"rules": [rule("age", "between", [25, 35])], "no_preference": ["city"]}
+    assert intake_gaps(partial) == [f for f in FIELD_LABELS if f not in ("age", "city")]
+
+
+def test_no_preference_never_marks_a_profile_down():
+    # Priya has no preference on drinking, so Dev's regular drinking is not a reason.
+    result = check_profile(BY_NAME["Dev Malhotra"], CLIENTS["Priya Nair"]["rules"])
+    assert "drinks" not in {r["field"] for r in result["reasons"]}
 
 
 # --- the shortlist for a client ---------------------------------------------

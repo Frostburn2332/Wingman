@@ -14,7 +14,8 @@
       {"field": "height_cm", "kind": "at_least", "value": 172, "strength": "flexible", "source": "intake form"},
       {"field": "diet", "kind": "one_of", "value": ["vegetarian", "eggetarian"], "strength": "flexible", "source": "intake form"},
       {"field": "education", "kind": "one_of", "value": ["master's", "doctorate"], "strength": "flexible", "source": "intake form"}
-    ]
+    ],
+    "no_preference": ["religion", "drinks", "marital_status"]
   },
   {
     "id": "c2",
@@ -29,8 +30,10 @@
       {"field": "marital_status", "kind": "one_of", "value": ["never married"], "strength": "deal-breaker", "source": "intake form"},
       {"field": "age", "kind": "between", "value": [26, 31], "strength": "flexible", "source": "intake form"},
       {"field": "city", "kind": "one_of", "value": ["Mumbai", "Pune"], "strength": "flexible", "source": "intake form"},
-      {"field": "drinks", "kind": "one_of", "value": ["never", "socially"], "strength": "flexible", "source": "intake form"}
-    ]
+      {"field": "drinks", "kind": "one_of", "value": ["never", "socially"], "strength": "flexible", "source": "intake form"},
+      {"field": "smokes", "kind": "one_of", "value": ["no"], "strength": "flexible", "source": "intake form"}
+    ],
+    "no_preference": ["height_cm", "wants_children", "education"]
   },
   {
     "id": "c3",
@@ -46,6 +49,7 @@
       {"field": "height_cm", "kind": "at_least", "value": 175, "strength": "flexible", "source": "intake form"},
       {"field": "smokes", "kind": "one_of", "value": ["no"], "strength": "flexible", "source": "intake form"},
       {"field": "city", "kind": "one_of", "value": ["Delhi", "Gurgaon"], "strength": "flexible", "source": "intake form"}
-    ]
+    ],
+    "no_preference": ["religion", "diet", "drinks", "marital_status"]
   }
 ]

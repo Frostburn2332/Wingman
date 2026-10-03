@@ -97,6 +97,17 @@ def check_profile(profile, rules):
     return {"status": status, "reasons": reasons}
 
 
+def intake_gaps(client):
+    """Basic preference questions the client has not answered.
+
+    The intake form asks every client about every field. Each answer is
+    either a rule or an explicit "no preference", so a field with neither
+    was never asked.
+    """
+    answered = {rule["field"] for rule in client["rules"]} | set(client.get("no_preference", []))
+    return [field for field in FIELD_LABELS if field not in answered]
+
+
 def candidates_for(client, profiles):
     """The profiles a client could be shown at all."""
     return [p for p in profiles if p["gender"] == client["looking_for"]]
