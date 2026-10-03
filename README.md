@@ -10,7 +10,9 @@ In the scenario's last 30 days, 690 of 1,000 shared profiles were rejected. Abou
 
 ## How it works
 
-One loop, in two layers:
+Every client answers the same intake questions on ten basic preferences: age, height, religion or community, city, diet, smoking, drinking, children, marital status and education. Each answer is either a rule (deal-breaker or flexible) or an explicit "no preference", so basics never have to be learned from rejections.
+
+On top of that, one loop in two layers:
 
 1. **Shortlist (no AI).** Each candidate is compared to the client's rules and marked:
    - **Fits:** breaks no rule.
@@ -24,7 +26,7 @@ One loop, in two layers:
    |---|---|
    | Already in preferences | The rejection was avoidable: the rule was on record |
    | Suggested change | A rule exists but the reply is firmer or stricter |
-   | New rule | The reply reveals a preference that was not on record |
+   | New rule | The client said "no preference" at intake, but the reply shows otherwise |
    | No clear rule | The reply is vague, gives no exact value, or says nothing new |
 
 3. **A person approves every rule.** Clicking "Add rule" stores it and shows which profiles changed status on the shortlist.
