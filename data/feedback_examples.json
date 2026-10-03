@@ -11,6 +11,7 @@
       "minimum": null,
       "maximum": null,
       "strength": "deal-breaker",
+      "condition": "",
       "evidence": "I can't be with someone who smokes"
     },
     "expected_outcome": "already_known"
@@ -27,6 +28,7 @@
       "minimum": null,
       "maximum": null,
       "strength": "deal-breaker",
+      "condition": "",
       "evidence": "I can't move out of Bangalore"
     },
     "expected_outcome": "suggested_change"
@@ -43,6 +45,7 @@
       "minimum": null,
       "maximum": null,
       "strength": "unclear",
+      "condition": "",
       "evidence": "I just didn't feel a spark"
     },
     "expected_outcome": "no_clear_rule"
@@ -59,6 +62,7 @@
       "minimum": null,
       "maximum": null,
       "strength": "deal-breaker",
+      "condition": "",
       "evidence": "We're a strictly vegetarian family"
     },
     "expected_outcome": "already_known"
@@ -75,6 +79,7 @@
       "minimum": null,
       "maximum": null,
       "strength": "deal-breaker",
+      "condition": "",
       "evidence": "I'm not comfortable with that, it's a firm no"
     },
     "expected_outcome": "suggested_change"
@@ -91,6 +96,7 @@
       "minimum": null,
       "maximum": null,
       "strength": "deal-breaker",
+      "condition": "",
       "evidence": "He wants kids and I've been clear that I don't"
     },
     "expected_outcome": "already_known"
@@ -107,6 +113,7 @@
       "minimum": null,
       "maximum": null,
       "strength": "flexible",
+      "condition": "",
       "evidence": "I'd rather not date someone who has been married before"
     },
     "expected_outcome": "new_rule"
@@ -123,8 +130,26 @@
       "minimum": null,
       "maximum": null,
       "strength": "unclear",
+      "condition": "",
       "evidence": "Something felt off"
     },
     "expected_outcome": "no_clear_rule"
+  },
+  {
+    "id": "f9",
+    "client_id": "c1",
+    "profile_id": "m16",
+    "reply": "Joel seems lovely, but he likes non-veg being cooked at home and I'm not okay with that. I don't mind him eating it outside or ordering in, just not cooked in our kitchen.",
+    "saved_reading": {
+      "category": "lifestyle",
+      "field": "diet",
+      "accepted_values": ["vegetarian", "eggetarian"],
+      "minimum": null,
+      "maximum": null,
+      "strength": "deal-breaker",
+      "condition": "Fine with non-veg eaten outside or ordered in, not cooked at home",
+      "evidence": "I don't mind him eating it outside or ordering in, just not cooked in our kitchen"
+    },
+    "expected_outcome": "note"
   }
 ]

@@ -13,6 +13,7 @@ from checker import (
     check_profile,
     describe_rule,
     intake_gaps,
+    notes_for,
     rule_passes,
     shortlist,
 )
@@ -113,6 +114,13 @@ def test_no_field_is_both_a_rule_and_no_preference(client):
 def test_unanswered_questions_are_reported_in_form_order():
     partial = {"rules": [rule("age", "between", [25, 35])], "no_preference": ["city"]}
     assert intake_gaps(partial) == [f for f in FIELD_LABELS if f not in ("age", "city")]
+
+
+def test_notes_apply_to_profiles_with_the_value_they_were_written_about():
+    note = {"field": "diet", "text": "Not cooked at home", "values": ["non-vegetarian"], "source": "test"}
+    assert notes_for(BY_NAME["Joel Fernandes"], [note]) == [note]
+    assert notes_for(BY_NAME["Sameer Khan"], [note]) == [note]
+    assert notes_for(BY_NAME["Karthik Iyer"], [note]) == []
 
 
 def test_no_preference_never_marks_a_profile_down():

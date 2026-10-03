@@ -23,6 +23,7 @@ NO_CLEAR_RULE = "no_clear_rule"
 ALREADY_KNOWN = "already_known"
 SUGGESTED_CHANGE = "suggested_change"
 NEW_RULE = "new_rule"
+NOTE = "note"
 
 UNCLEAR = "unclear"
 LEARNED = "learned from feedback"
@@ -70,6 +71,10 @@ READING_FIELDS = {
     "minimum": "for age or height: the lowest number the client would accept, or null",
     "maximum": "for age: the highest number the client would accept, or null",
     "strength": f"\"{DEAL_BREAKER}\", \"{FLEXIBLE}\" or \"{UNCLEAR}\"",
+    "condition": (
+        "any condition or exception the client puts on the reason that the listed values "
+        "cannot express, such as where or when something is acceptable. Empty if there is none"
+    ),
     "evidence": "the exact phrase from the reply that supports this, copied word for word",
 }
 
@@ -85,6 +90,7 @@ READING_SCHEMA = {
         "minimum": {"type": ["number", "null"]},
         "maximum": {"type": ["number", "null"]},
         "strength": {"type": "string", "enum": STRENGTHS},
+        "condition": {"type": "string"},
         "evidence": {"type": "string"},
     },
     "required": list(READING_FIELDS),
@@ -116,6 +122,13 @@ is not a rule.
 When the reply names what the client does not want, list what they would \
 accept instead. For example, "I can't be with a heavy drinker" means drinks: \
 never, socially.
+
+Only fill in condition when the client accepts the thing under some \
+circumstances and objects only in others. For example, "I don't mind him \
+eating meat outside, just not cooked at home" has the condition "fine with \
+non-veg eaten outside or ordered in, not cooked at home". An explanation of \
+why the client objects ("my parents are here") is not a condition. Leave \
+condition empty when there is none.
 
 If the reply gives several reasons, use the one the client states most firmly.
 
@@ -235,6 +248,17 @@ def reading_to_rule(reading, existing=None):
     return {"field": field, "kind": kind, "value": value, "strength": strength, "source": LEARNED}
 
 
+def note_from(reading, rejected_profile):
+    """A note for the matchmaker when the reply has a condition on a profile
+    field, or None. The note applies to candidates with the same value as the
+    rejected profile, since that value is what the condition is about."""
+    field, condition = reading.get("field"), (reading.get("condition") or "").strip()
+    if field not in FIELD_LABELS or not condition:
+        return None
+    value = rejected_profile.get(field)
+    return {"field": field, "text": condition, "values": [] if value is None else [value], "source": LEARNED}
+
+
 def decide_outcome(reading, rules, rejected_profile):
     """Compare a reading to the client's rules and the profile they rejected.
 
@@ -244,16 +268,27 @@ def decide_outcome(reading, rules, rejected_profile):
     deserves a second look. When there is no clear rule, `why` says whether
     the reply was vague, named a field without a checkable value, or said
     nothing new.
+
+    A reply with a condition the fixed values cannot express gives a note
+    instead of a rule, so a nuanced objection never becomes a blanket block.
     """
-    def result(outcome, rule=None, existing=None, why=None):
+    def result(outcome, rule=None, existing=None, why=None, note=None):
         caution = rule is not None and rule_passes(rule, rejected_profile.get(rule["field"])) is not False
-        return {"outcome": outcome, "rule": rule, "existing_rule": existing, "caution": caution, "why": why}
+        return {
+            "outcome": outcome, "rule": rule, "existing_rule": existing,
+            "caution": caution, "why": why, "note": note,
+        }
 
     field, strength = reading.get("field"), reading.get("strength")
+    existing = next((rule for rule in rules if rule["field"] == field), None)
+
+    note = note_from(reading, rejected_profile)
+    if note:
+        return result(NOTE, existing=existing, note=note)
+
     if field not in FIELD_LABELS or strength not in (DEAL_BREAKER, FLEXIBLE):
         return result(NO_CLEAR_RULE, why=VAGUE)
 
-    existing = next((rule for rule in rules if rule["field"] == field), None)
     suggested = reading_to_rule(reading, existing)
 
     if existing is None:

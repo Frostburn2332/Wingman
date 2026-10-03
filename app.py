@@ -17,6 +17,7 @@ from checker import (
     describe_rule,
     format_value,
     intake_gaps,
+    notes_for,
     shortlist,
 )
 from feedback import (
@@ -25,6 +26,7 @@ from feedback import (
     NEW_RULE,
     NO_CLEAR_RULE,
     NO_VALUE,
+    NOTE,
     NOTHING_NEW,
     SUGGESTED_CHANGE,
     VAGUE,
@@ -92,19 +94,29 @@ def override_key(client):
 
 def rules_table(client):
     """Every intake question: the client's rules first, then the fields they
-    answered "no preference" to."""
+    answered "no preference" to, each with any note learned from feedback."""
+    def notes_on(field):
+        return "; ".join(note["text"] for note in client["notes"] if note["field"] == field)
+
     rows = [
         {
             "Preference": FIELD_LABELS[rule["field"]],
             "Accepts": describe_rule(rule),
             "Strength": rule["strength"],
             "Source": rule["source"],
+            "Note": notes_on(rule["field"]),
         }
         for rule in client["rules"]
     ]
     with_rule = {rule["field"] for rule in client["rules"]}
     rows += [
-        {"Preference": FIELD_LABELS[field], "Accepts": "anything", "Strength": "no preference", "Source": "intake form"}
+        {
+            "Preference": FIELD_LABELS[field],
+            "Accepts": "anything",
+            "Strength": "no preference",
+            "Source": "intake form",
+            "Note": notes_on(field),
+        }
         for field in FIELD_LABELS
         if field in client.get("no_preference", []) and field not in with_rule
     ]
@@ -128,6 +140,8 @@ def profile_card(client, item):
             verdict.markdown("\n".join(f"- {reason['text']}" for reason in item["reasons"]))
         else:
             verdict.caption("Breaks none of the client's rules.")
+        for note in notes_for(profile, client["notes"]):
+            verdict.markdown(f":blue[**Check with the candidate:**] {note['text']}")
 
 
 def send_selected(client, checked):
@@ -254,6 +268,7 @@ def read_reply(client, examples, live):
         "profile_name": st.session_state[rejected_key(client)],
         **read_feedback(reply, examples, live),
         "added": None,
+        "added_note": None,
     }
 
 
@@ -273,17 +288,33 @@ def add_rule(client, profiles, rule):
     }
 
 
+def add_note(client, profiles, note):
+    """Store an approved note and record which candidates it will show on."""
+    st.session_state.notes[client["id"]] = [*client["notes"], note]
+    st.session_state[result_key(client)]["added_note"] = {
+        "note": note,
+        "shown_on": [p["name"] for p in candidates_for(client, profiles) if notes_for(p, [note])],
+    }
+
+
+def note_text(note):
+    return note["text"].rstrip(". ")
+
+
 def show_reading(result, existing):
     reading = result["reading"]
     rule = reading_to_rule(reading, existing)
     field = reading["field"]
-    st.markdown("\n".join([
+    lines = [
         f"- **Reason category:** {reading['category']}",
         f"- **Profile field:** {FIELD_LABELS.get(field, 'none')}",
         f"- **Would accept:** {describe_rule(rule) if rule else 'not given'}",
         f"- **Strength:** {reading['strength']}",
-        f"- **Supporting phrase:** \"{reading['evidence']}\"",
-    ]))
+    ]
+    if (reading.get("condition") or "").strip():
+        lines.append(f"- **Condition:** {reading['condition']}")
+    lines.append(f"- **Supporting phrase:** \"{reading['evidence']}\"")
+    st.markdown("\n".join(lines))
     if result["source"] == "live":
         st.caption(f"Source: live reading by {result['model']}.")
     elif result["error"]:
@@ -292,10 +323,35 @@ def show_reading(result, existing):
         st.caption("Source: saved example output. No API key is set, so the live reading is off.")
 
 
+def show_note_suggestion(client, profiles, note):
+    label = FIELD_LABELS[note["field"]].lower()
+    if note["values"]:
+        applies = f"It will show on every candidate whose {label} is {' or '.join(map(str, note['values']))}."
+    else:
+        applies = "The rejected profile has no value for this field, so it would show on no one."
+    st.info(
+        f"**Suggested note.** {note_text(note)}.\n\n"
+        "The reply puts a condition on this that a rule can't check, so the rule stays as it is. "
+        f"The matchmaker checks it with the candidate instead. {applies}"
+    )
+    st.button(
+        "Add note",
+        type="primary",
+        disabled=not note["values"],
+        on_click=add_note,
+        args=(client, profiles, note),
+        key=f"add_note_{client['id']}",
+    )
+    st.caption("Nothing changes until you add the note.")
+
+
 def show_decision(client, profiles, decision):
     outcome, rule, existing = decision["outcome"], decision["rule"], decision["existing_rule"]
     if outcome == NO_CLEAR_RULE:
         st.info(f"**No clear rule.** {NO_RULE_REASONS[decision['why']]}")
+        return
+    if outcome == NOTE:
+        show_note_suggestion(client, profiles, decision["note"])
         return
     if outcome == ALREADY_KNOWN:
         st.warning(
@@ -389,6 +445,14 @@ def feedback_screen(client, profiles, examples, live):
         else:
             st.markdown("No profile changed status.")
         st.caption("Open the Shortlist tab to see the updated list.")
+    elif result["added_note"]:
+        added = result["added_note"]
+        st.success(f"**Note added.** {note_text(added['note'])}, learned from feedback.")
+        st.markdown(
+            f"It shows on {len(added['shown_on'])} candidate(s) as \"Check with the candidate\": "
+            + ", ".join(added["shown_on"]) + "."
+        )
+        st.caption("No rule changed, so no profile changed status.")
     else:
         show_decision(client, profiles, decide_outcome(reading, client["rules"], profile))
 
@@ -398,6 +462,7 @@ def feedback_screen(client, profiles, examples, live):
 
 def reset_rules(clients):
     st.session_state.rules = {c["id"]: c["rules"] for c in clients}
+    st.session_state.notes = {c["id"]: [] for c in clients}
     for c in clients:
         st.session_state.pop(result_key(c), None)
 
@@ -410,9 +475,11 @@ def main():
     profiles = load("profiles.json")
     examples = load("feedback_examples.json")
 
-    # Rules live in the session so that approved rules take effect. They reset on refresh.
+    # Rules and notes live in the session so that approved ones take effect. They reset on refresh.
     if "rules" not in st.session_state:
         st.session_state.rules = {c["id"]: c["rules"] for c in clients}
+    if "notes" not in st.session_state:
+        st.session_state.notes = {c["id"]: [] for c in clients}
 
     api_key = setting("GEMINI_API_KEY")
     models = [setting("GEMINI_MODEL")] if setting("GEMINI_MODEL") else DEFAULT_MODELS
@@ -427,13 +494,17 @@ def main():
     with st.sidebar:
         name = st.selectbox("Client", [c["name"] for c in clients], key="client")
         chosen = next(c for c in clients if c["name"] == name)
-        client = {**chosen, "rules": st.session_state.rules[chosen["id"]]}
+        client = {
+            **chosen,
+            "rules": st.session_state.rules[chosen["id"]],
+            "notes": st.session_state.notes[chosen["id"]],
+        }
         st.markdown(f"{client['age']}, {client['city']}")
         st.markdown(f"Looking for a {client['looking_for']}")
         st.markdown(f"Matchmaker: {client['matchmaker']}")
         st.divider()
         st.button("Reset learned rules", on_click=reset_rules, args=(clients,), key="reset_rules")
-        st.caption("Puts every client's rules back to the intake form.")
+        st.caption("Puts every client's rules back to the intake form and clears learned notes.")
         st.divider()
         if live:
             st.caption(f"AI reading: live, using {models[0]}.")

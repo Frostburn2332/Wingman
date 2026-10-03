@@ -97,6 +97,12 @@ def check_profile(profile, rules):
     return {"status": status, "reasons": reasons}
 
 
+def notes_for(profile, notes):
+    """The matchmaker's notes that apply to this profile: those about a field
+    where the profile has the value the note was written about."""
+    return [note for note in notes if profile.get(note["field"]) in note["values"]]
+
+
 def intake_gaps(client):
     """Basic preference questions the client has not answered.
 

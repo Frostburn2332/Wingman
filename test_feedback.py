@@ -10,6 +10,7 @@ from feedback import (
     NEW_RULE,
     NO_CLEAR_RULE,
     NO_VALUE,
+    NOTE,
     NOTHING_NEW,
     READING_SCHEMA,
     SUGGESTED_CHANGE,
@@ -117,9 +118,10 @@ def test_check_reading_rejects_values_outside_the_lists(change):
         check_reading(bad)
 
 
-def test_check_reading_rejects_a_missing_field():
+@pytest.mark.parametrize("missing", ["evidence", "condition"])
+def test_check_reading_rejects_a_missing_field(missing):
     bad = dict(BY_ID["f2"]["saved_reading"])
-    del bad["evidence"]
+    del bad[missing]
     with pytest.raises(ValueError):
         check_reading(bad)
 
@@ -153,6 +155,38 @@ def test_a_new_flexible_rule_warns_but_does_not_block():
     result = check_profile(nikhil, updated)
     assert result["status"] == WARNING
     assert "marital_status" in {r["field"] for r in result["reasons"]}
+
+
+# --- conditional replies become notes, not rules ----------------------------
+
+def test_conditional_reply_gives_a_note_and_leaves_the_rule_alone():
+    # Priya is fine with non-veg eaten out, just not cooked at home.
+    result = outcome_for("f9")
+    assert result["outcome"] == NOTE
+    assert result["rule"] is None
+    assert result["note"] == {
+        "field": "diet",
+        "text": "Fine with non-veg eaten outside or ordered in, not cooked at home",
+        "values": ["non-vegetarian"],
+        "source": LEARNED,
+    }
+
+
+def test_condition_without_a_profile_field_is_not_a_note():
+    vague = {**reading("none", "unclear"), "condition": "only if he is kind to waiters"}
+    result = decide_outcome(vague, PRIYA["rules"], PROFILES["m02"])
+    assert (result["outcome"], result["why"]) == (NO_CLEAR_RULE, VAGUE)
+
+
+def test_blank_condition_is_ignored():
+    firm = {**BY_ID["f2"]["saved_reading"], "condition": "   "}
+    assert decide_outcome(firm, PRIYA["rules"], PROFILES["m04"])["outcome"] == SUGGESTED_CHANGE
+
+
+def test_note_on_a_missing_value_applies_to_no_one():
+    # Sameer has no "wants children" value, so a note cannot say who it is about.
+    conditional = {**reading("wants_children", FLEXIBLE, ["yes"]), "condition": "only after two years"}
+    assert decide_outcome(conditional, PRIYA["rules"], PROFILES["m05"])["note"]["values"] == []
 
 
 # --- deciding the outcome ---------------------------------------------------
@@ -268,3 +302,8 @@ def test_prompt_contains_the_reply_and_the_field_list_but_no_client_rules():
 def test_prompt_asks_for_what_the_client_would_accept_not_what_they_reject():
     one_line = " ".join(build_prompt("x").split())
     assert "list what they would accept instead" in one_line
+
+
+def test_prompt_separates_conditions_from_explanations():
+    one_line = " ".join(build_prompt("x").split())
+    assert "An explanation of why the client objects (\"my parents are here\") is not a condition" in one_line
